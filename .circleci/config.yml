@@ -1,0 +1,140 @@
+version: 2
+jobs:
+  build:
+    working_directory: ~/etops/couchbase_exporter
+    parallelism: 1
+    environment:
+      DOCKER_PRIVATE_REPO: etops
+      IMAGE_NAME: couchbase_exporter
+    docker:
+      - image: docker:latest
+
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+
+      - run:
+          name: Build application Docker image
+          command: docker build --cache-from=$IMAGE_NAME -t $IMAGE_NAME .
+          no_output_timeout: 30m
+      - run:
+          name: Save Docker image
+          command: |
+            mkdir -p ~/caches
+            docker save -o ~/caches/$IMAGE_NAME.tar $IMAGE_NAME
+          no_output_timeout: 30m
+
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - etops
+            - caches
+
+  test:
+    working_directory: ~/etops/couchbase_exporter
+    parallelism: 1
+    environment:
+      DOCKER_PRIVATE_REPO: etops
+      IMAGE_NAME: couchbase_exporter
+    machine: true
+
+    steps:
+      # - run:
+      #   name: Pull docker containers (background step)
+      #   command: |
+      #     docker login -u $DOCKER_USER -p $DOCKER_PASS
+      #     docker pull etops/swagger-codegen:0.0.3
+      #     docker pull redis:2.8.23
+      #     docker pull etops/elasticsearch:0.1.4
+      #     docker pull etops/couchbase:0.10.0
+      #     docker pull etops/ow-back:$(cat owbackVersion.txt)
+      #   background: true
+
+      - attach_workspace:
+          at: ~/
+
+      - run:
+          name: Load Docker image layer cache
+          command: |
+            set +o pipefail
+            docker load -i ~/caches/$IMAGE_NAME.tar
+
+      ## TODO: Implement real test
+      # - run:
+      #     name: Run backend containers
+      #     command: |
+      #       docker login -u $DOCKER_USER -p $DOCKER_PASS
+      #       ./node_modules/.bin/gulp --gulpfile node_modules/\@nectar/ow-docker-compose/gulpfile.js runSpecificOwBackWithoutMS --owbackVersion=$(cat owbackVersion.txt)
+
+      #       until curl --fail --output /dev/null --silent --head http://localhost:3000/swagger/ || \
+      #             docker logs owdockercompose_ow-back_1 2>&1 | grep "Unhandled rejection Error: Error: cannot perform operations on a shutdown bucket" ; do
+      #         sleep 5
+      #       done
+
+      #       if docker logs owdockercompose_ow-back_1 2>&1 | grep "Unhandled rejection Error: Error: cannot perform operations on a shutdown bucket"; then
+      #         # Dirty hack to workaround backend bootstrap bug
+      #         docker restart owdockercompose_ow-back_1
+      #         # check if backend is up
+      #         until curl --fail --output /dev/null --silent --head http://localhost:3000/swagger/ ; do
+      #           sleep 5
+      #         done
+      #       fi
+      # - run:
+      #     name: Print docker ps and docker logs from backend
+      #     command: |
+      #       docker ps
+      #       docker logs owdockercompose_ow-back_1
+      #     when: on_fail
+                
+      - run:
+          name: Run docker compose to deploy the stack
+          command: |
+            docker run -d -p 9131:9131 -it --rm --name $IMAGE_NAME -e COUCHBASE_MASTER="http://127.0.0.1:8091" -e COUCHBASE_USER="admin" -e COUCHBASE_PASSWORD="admin" $IMAGE_NAME
+      - run:
+          command: docker logs $IMAGE_NAME
+          when: on_fail
+
+      # - run:
+      #     name: Test couchbase_exporter
+      #     command: |
+      #       until curl --fail http://localhost:9131/metrics ; do
+      #         sleep 5
+      #       done
+
+  deploy:
+    working_directory: ~/etops/couchbase_exporter
+    parallelism: 1
+    environment:
+      DOCKER_PRIVATE_REPO: etops
+      IMAGE_NAME: couchbase_exporter
+    docker:
+      - image: docker:latest
+
+    steps:
+      - setup_remote_docker:
+          docker_layer_caching: true
+
+      - attach_workspace:
+          at: ~/
+
+      - deploy:
+          name: Push application Docker image
+          command: |
+            docker login -u $DOCKER_USER -p $DOCKER_PASS
+            docker tag $IMAGE_NAME $DOCKER_PRIVATE_REPO/$IMAGE_NAME:latest
+            docker tag $IMAGE_NAME $DOCKER_PRIVATE_REPO/$IMAGE_NAME:$CIRCLE_BUILD_NUM
+            docker push $DOCKER_PRIVATE_REPO/$IMAGE_NAME:$CIRCLE_BUILD_NUM
+            docker push $DOCKER_PRIVATE_REPO/$IMAGE_NAME:latest
+
+workflows:
+  version: 2
+  build_test_deploy:
+    jobs:
+      - build
+      - test:
+          requires:
+            - build
+      - deploy:
+          requires:
+            - test
