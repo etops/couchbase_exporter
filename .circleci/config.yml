@@ -90,7 +90,7 @@ jobs:
       - run:
           name: Run docker compose to deploy the stack
           command: |
-            docker run -d -p 9131:9131 -it --rm --name $IMAGE_NAME -e COUCHBASE_MASTER="http://127.0.0.1:8091" -e COUCHBASE_USER="admin" -e COUCHBASE_PASSWORD="admin" $IMAGE_NAME
+            docker run -d -p 9131:9131 -it --rm --name $IMAGE_NAME -e COUCHBASE_MASTER="http://127.0.0.1:8091" -e COUCHBASE_USERNAME="admin" -e COUCHBASE_PASSWORD="admin" $IMAGE_NAME
       - run:
           command: docker logs $IMAGE_NAME
           when: on_fail
